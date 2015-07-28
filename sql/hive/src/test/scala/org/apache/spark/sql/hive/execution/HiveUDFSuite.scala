@@ -30,6 +30,7 @@ import org.apache.hadoop.hive.serde2.{AbstractSerDe, SerDeStats}
 import org.apache.hadoop.io.Writable
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.hive.test.TestHive
+import test.org.apache.spark.sql.hive.execution._
 
 import org.apache.spark.util.Utils
 
