@@ -90,7 +90,7 @@ private[spark] object CoarseGrainedClusterMessages {
       requestedTotal: Int,
       localityAwareTasks: Int,
       hostToLocalTaskCount: Map[String, Int],
-      nodeBlacklist: Seq[String])
+      nodeBlacklist: Set[String])
     extends CoarseGrainedClusterMessage
 
   case class KillExecutors(executorIds: Seq[String]) extends CoarseGrainedClusterMessage

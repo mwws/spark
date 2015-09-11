@@ -49,7 +49,7 @@ trait BlacklistStrategy {
 class ThresholdStrategy (
     executorFailedThreshold: Int,
     nodeFailedThreshold: Int,
-    timeout: Long
+    val timeout: Long
   )extends BlacklistStrategy {
 
   private def executorBlacklistCandidate(
@@ -76,7 +76,7 @@ class ThresholdStrategy (
  * A type of blacklist strategy:
  * Once task failed  at executor, put the executor and its node into blacklist.
  */
-class StrictStrategy (timeout: Long) extends BlacklistStrategy {
+class StrictStrategy (val timeout: Long) extends BlacklistStrategy {
   def getExecutorBlacklist(
       failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String] = {
     return failureExecutors.keys.toSet
