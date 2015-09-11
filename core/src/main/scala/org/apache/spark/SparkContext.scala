@@ -344,7 +344,7 @@ class SparkContext(config: SparkConf) extends Logging with ExecutorAllocationCli
     _executorAllocationManager
 
   private[spark] def cleaner: Option[ContextCleaner] = _cleaner
-  
+
   private[spark] def blacklistTracker: Option[BlacklistTracker] = _blacklistTracker
 
   private[spark] var checkpointDir: Option[String] = None
@@ -552,15 +552,15 @@ class SparkContext(config: SparkConf) extends Logging with ExecutorAllocationCli
         None
       }
     _executorAllocationManager.foreach(_.start())
-    
-    //By default blacklistTracker is enabled.
+
+    // By default blacklistTracker is enabled.
     _blacklistTracker = if (_conf.getBoolean("spark.scheduler.blacklist.enabled", true)){
       Some(new BlacklistTracker(_conf))
     } else {
       None
-    } 
+    }
     _blacklistTracker.foreach(_.start())
-    
+
     _cleaner =
       if (_conf.getBoolean("spark.cleaner.referenceTracking", true)) {
         Some(new ContextCleaner(this))

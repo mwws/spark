@@ -27,11 +27,11 @@ import org.apache.spark.util.SystemClock
  */
 trait BlacklistStrategy {
   val timeout: Long
-  def getExecutorBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]) : Seq[String]
-  def getNodeBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]) : Seq[String]
-  
-  //Default implementation to remove failure executors from HashMap based on time period.
-  def expireTimeoutFailureExecutors(failureExecutors: mutable.HashMap[String, FailureStatus]) : Unit = {
+  def getExecutorBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String]
+  def getNodeBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String]
+
+  // Default implementation to remove failure executors from HashMap based on given time period.
+  def recoverFailureExecutors(failureExecutors: mutable.HashMap[String, FailureStatus]): Unit = {
     val now = new SystemClock().getTimeMillis()
     failureExecutors.retain((executorid, failureStatus) => {
       (now - failureStatus.updatedTime) < timeout
@@ -41,27 +41,34 @@ trait BlacklistStrategy {
 
 /**
  * A type of blacklist strategy:
- * Once the failed times of executor is more than "executorFailedThreshold" put it into blacklist
- * Once there are more than "nodeFailedThreshold" blacklisted executors on the same node, put the node into blacklist
+ *
+ * An executor will be in blacklist, if it failed more than "executorFailedThreshold" times.
+ * A node will be in blacklist, if there are more than "nodeFailedThreshold" executors on it
+ * in executor blacklist
  */
 class ThresholdStrategy (
     executorFailedThreshold: Int,
     nodeFailedThreshold: Int,
     timeout: Long
   )extends BlacklistStrategy {
-  
-  private def executorBlacklistCandidate(failureExecutors: mutable.HashMap[String, FailureStatus]): mutable.HashMap[String, FailureStatus] = {
-    failureExecutors.filter{ case (id, failureStatus) => failureStatus.failureTimes > executorFailedThreshold }
+
+  private def executorBlacklistCandidate(
+      failureExecutors: mutable.HashMap[String, FailureStatus]) = {
+    failureExecutors.filter{
+      case (id, failureStatus) => failureStatus.failureTimes > executorFailedThreshold
+    }
   }
-  
-  def getExecutorBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]) : Seq[String] = {
-    executorBlacklistCandidate(failureExecutors).keys.toSeq
+
+  def getExecutorBlacklist(
+      failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String] = {
+    executorBlacklistCandidate(failureExecutors).keys.toSet
   }
-  
-  def getNodeBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]) : Seq[String] = {
-    executorBlacklistCandidate(failureExecutors).groupBy{case (id, failureStatus) => failureStatus.host}
+
+  def getNodeBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String] = {
+    executorBlacklistCandidate(failureExecutors)
+      .groupBy{case (id, failureStatus) => failureStatus.host}
       .filter {case (host, failureExecutors) => failureExecutors.size > nodeFailedThreshold}
-      .keys.toSeq
+      .keys.toSet
   }
 }
 
@@ -70,29 +77,30 @@ class ThresholdStrategy (
  * Once task failed  at executor, put the executor and its node into blacklist.
  */
 class StrictStrategy (timeout: Long) extends BlacklistStrategy {
-  def getExecutorBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]) : Seq[String] = {
-    return failureExecutors.keys.toSeq
+  def getExecutorBlacklist(
+      failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String] = {
+    return failureExecutors.keys.toSet
   }
-  
-  def getNodeBlacklist(failureExecutors: mutable.HashMap[String, FailureStatus]) : Seq[String] = {
-    return failureExecutors.values.map(_.host).toSeq
+
+  def getNodeBlacklist(
+      failureExecutors: mutable.HashMap[String, FailureStatus]): Set[String] = {
+    return failureExecutors.values.map(_.host).toSet
   }
 }
 
 object BlacklistStrategy {
-  
-  //Generate BlacklistStrategy based on spark configuration
-  def apply(sparkConf: SparkConf) : BlacklistStrategy = {
+  // Generate BlacklistStrategy based on spark configuration
+  def apply(sparkConf: SparkConf): BlacklistStrategy = {
     val timeout = sparkConf.getLong("spark.scheduler.blacklist.timeout", 1800000L)
     sparkConf.get("spark.scheduler.blacklist.strategy", "threshold") match {
-      case "threshold" => 
+      case "threshold" =>
         new ThresholdStrategy(
             sparkConf.getInt("spark.scheduler.blacklist.threshold.executorFailedThreshold", 3),
             sparkConf.getInt("spark.scheduler.blacklist.threshold.nodeFailedThreshold", 3),
             timeout)
-      case "strict" => 
+      case "strict" =>
         new StrictStrategy(timeout)
-      case unsupported => 
+      case unsupported =>
         throw new Exception(s"No match blacklist strategy for $unsupported")
     }
   }

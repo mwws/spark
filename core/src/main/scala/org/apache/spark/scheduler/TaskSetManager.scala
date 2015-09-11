@@ -248,7 +248,7 @@ private[spark] class TaskSetManager(
     while (indexOffset > 0) {
       indexOffset -= 1
       val index = list(indexOffset)
-      if (!executorIsBlacklisted(execId)) {
+      if (!blacklistTracker.fold(false)(_.executorIsBlacklisted(execId, sched))) {
         // This should almost always be list.trimEnd(1) to remove tail
         list.remove(indexOffset)
         if (copiesRunning(index) == 0 && !successful(index)) {
@@ -265,16 +265,6 @@ private[spark] class TaskSetManager(
   }
 
   val blacklistTracker = sched.sc.blacklistTracker
-  
-  /**
-   * Check if the executor is in blacklist
-   */
-  private def executorIsBlacklisted(execId: String): Boolean = {
-    val blacklistExecutors: Seq[String] = blacklistTracker.fold(Seq.empty[String])(tracker => {
-      tracker.executorBlacklist(sched)
-    })
-    blacklistExecutors.contains(execId)
-  }
 
   /**
    * Return a speculative task for a given executor if any are available. The task should not have
@@ -288,7 +278,8 @@ private[spark] class TaskSetManager(
     speculatableTasks.retain(index => !successful(index)) // Remove finished tasks from set
 
     def canRunOnHost(index: Int): Boolean =
-      !hasAttemptOnHost(index, host) && !executorIsBlacklisted(execId)
+      !hasAttemptOnHost(index, host) &&
+      !blacklistTracker.fold(false)(_.executorIsBlacklisted(execId, sched))
 
     if (!speculatableTasks.isEmpty) {
       // Check for process-local tasks; note that tasks can be process-local
@@ -627,7 +618,7 @@ private[spark] class TaskSetManager(
       logInfo("Ignoring task-finished event for " + info.id + " in stage " + taskSet.id +
         " because task " + index + " has already completed successfully")
     }
-
+    blacklistTracker.foreach(_.removeFailureExecutors(Iterable(info.executorId)))
     maybeFinishTaskSet()
   }
 
@@ -703,10 +694,10 @@ private[spark] class TaskSetManager(
         logError("Unknown TaskEndReason: " + e)
         None
     }
-    
+
     // add failed executors to blacklistTracker
     blacklistTracker.foreach(_.updateFailureExecutors(info, reason))
-      
+
     sched.dagScheduler.taskEnded(tasks(index), reason, null, null, info, taskMetrics)
     addPendingTask(index)
     if (!isZombie && state != TaskState.KILLED && !reason.isInstanceOf[TaskCommitDenied]) {

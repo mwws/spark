@@ -434,7 +434,12 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         numExistingExecutors + numPendingExecutors - executorsPendingToRemove.size)
     }
 
-    doKillExecutors(executorsToKill)
+    val killRequestAcknowledged = doKillExecutors(executorsToKill)
+    if(killRequestAcknowledged) {
+      scheduler.sc.blacklistTracker.foreach(_.removeFailureExecutors(executorsToKill))
+    }
+
+    killRequestAcknowledged
   }
 
   /**
