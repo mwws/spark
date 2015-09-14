@@ -58,15 +58,6 @@ private[spark] class TaskSetManager(
 
   val conf = sched.sc.conf
 
-  /*
-   * Sometimes if an executor is dead or in an otherwise invalid state, the driver
-   * does not realize right away leading to repeated task failures. If enabled,
-   * this temporarily prevents a task from re-launching on an executor where
-   * it just failed.
-   */
-  private val EXECUTOR_TASK_BLACKLIST_TIMEOUT =
-    conf.getLong("spark.scheduler.executorTaskBlacklistTime", 0L)
-
   // Quantile of tasks at which to start speculation
   val SPECULATION_QUANTILE = conf.getDouble("spark.speculation.quantile", 0.75)
   val SPECULATION_MULTIPLIER = conf.getDouble("spark.speculation.multiplier", 1.5)
@@ -83,8 +74,6 @@ private[spark] class TaskSetManager(
   val copiesRunning = new Array[Int](numTasks)
   val successful = new Array[Boolean](numTasks)
   private val numFailures = new Array[Int](numTasks)
-  // key is taskId, value is a Map of executor id to when it failed
-  private val failedExecutors = new HashMap[Int, HashMap[String, Long]]()
 
   val taskAttempts = Array.fill[List[TaskInfo]](numTasks)(Nil)
   var tasksSuccessful = 0
@@ -259,7 +248,7 @@ private[spark] class TaskSetManager(
     while (indexOffset > 0) {
       indexOffset -= 1
       val index = list(indexOffset)
-      if (!executorIsBlacklisted(execId, index)) {
+      if (!blacklistTracker.fold(false)(_.executorIsBlacklisted(execId, sched))) {
         // This should almost always be list.trimEnd(1) to remove tail
         list.remove(indexOffset)
         if (copiesRunning(index) == 0 && !successful(index)) {
@@ -275,20 +264,7 @@ private[spark] class TaskSetManager(
     taskAttempts(taskIndex).exists(_.host == host)
   }
 
-  /**
-   * Is this re-execution of a failed task on an executor it already failed in before
-   * EXECUTOR_TASK_BLACKLIST_TIMEOUT has elapsed ?
-   */
-  private def executorIsBlacklisted(execId: String, taskId: Int): Boolean = {
-    if (failedExecutors.contains(taskId)) {
-      val failed = failedExecutors.get(taskId).get
-
-      return failed.contains(execId) &&
-        clock.getTimeMillis() - failed.get(execId).get < EXECUTOR_TASK_BLACKLIST_TIMEOUT
-    }
-
-    false
-  }
+  val blacklistTracker = sched.sc.blacklistTracker
 
   /**
    * Return a speculative task for a given executor if any are available. The task should not have
@@ -302,7 +278,8 @@ private[spark] class TaskSetManager(
     speculatableTasks.retain(index => !successful(index)) // Remove finished tasks from set
 
     def canRunOnHost(index: Int): Boolean =
-      !hasAttemptOnHost(index, host) && !executorIsBlacklisted(execId, index)
+      !hasAttemptOnHost(index, host) &&
+      !blacklistTracker.fold(false)(_.executorIsBlacklisted(execId, sched))
 
     if (!speculatableTasks.isEmpty) {
       // Check for process-local tasks; note that tasks can be process-local
@@ -641,7 +618,8 @@ private[spark] class TaskSetManager(
       logInfo("Ignoring task-finished event for " + info.id + " in stage " + taskSet.id +
         " because task " + index + " has already completed successfully")
     }
-    failedExecutors.remove(index)
+
+    blacklistTracker.foreach(_.updateFailureExecutors(info, Success))
     maybeFinishTaskSet()
   }
 
@@ -717,9 +695,9 @@ private[spark] class TaskSetManager(
         logError("Unknown TaskEndReason: " + e)
         None
     }
-    // always add to failed executors
-    failedExecutors.getOrElseUpdate(index, new HashMap[String, Long]()).
-      put(info.executorId, clock.getTimeMillis())
+
+    blacklistTracker.foreach(_.updateFailureExecutors(info, reason))
+
     sched.dagScheduler.taskEnded(tasks(index), reason, null, null, info, taskMetrics)
     addPendingTask(index)
     if (!isZombie && state != TaskState.KILLED && !reason.isInstanceOf[TaskCommitDenied]) {

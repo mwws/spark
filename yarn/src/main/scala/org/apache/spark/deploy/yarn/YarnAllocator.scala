@@ -21,8 +21,10 @@ import java.util.Collections
 import java.util.concurrent._
 import java.util.regex.Pattern
 
+import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
+import scala.collection.immutable.Set
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder
 
@@ -92,6 +94,8 @@ private[yarn] class YarnAllocator(
     } else {
       sparkConf.getInt("spark.executor.instances", YarnSparkHadoopUtil.DEFAULT_NUMBER_EXECUTORS)
     }
+  
+  private var currentNodeBlacklist = Set.empty[String]
 
   // Keep track of which container is running which executor to remove the executors later
   // Visible for testing.
@@ -177,13 +181,21 @@ private[yarn] class YarnAllocator(
   def requestTotalExecutorsWithPreferredLocalities(
       requestedTotal: Int,
       localityAwareTasks: Int,
-      hostToLocalTaskCount: Map[String, Int]): Boolean = synchronized {
+      hostToLocalTaskCount: Map[String, Int],
+      nodeBlacklist: Set[String]): Boolean = synchronized {
     this.numLocalityAwareTasks = localityAwareTasks
     this.hostToLocalTaskCounts = hostToLocalTaskCount
 
     if (requestedTotal != targetNumExecutors) {
       logInfo(s"Driver requested a total number of $requestedTotal executor(s).")
       targetNumExecutors = requestedTotal
+      
+      //Update blacklist infomation to YARN ResouceManager for this application, 
+      //in order to avoid allocating new Container on the problematic nodes.
+      val blacklistAdditions = nodeBlacklist -- currentNodeBlacklist
+      val blacklistRemovals = currentNodeBlacklist -- nodeBlacklist
+      amClient.updateBlacklist(blacklistAdditions.toList, blacklistRemovals.toList)
+      currentNodeBlacklist = nodeBlacklist
       true
     } else {
       false
