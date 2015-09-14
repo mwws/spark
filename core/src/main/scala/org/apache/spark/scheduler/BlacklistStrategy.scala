@@ -27,12 +27,13 @@ import org.apache.spark.util.SystemClock
  */
 trait BlacklistStrategy {
   val expireTimeInMillisecond: Long
-  
+
   def getExecutorBlacklist(failedExecutorMap: mutable.HashMap[String, FailureStatus]): Set[String]
   def getNodeBlacklist(failedExecutorMap: mutable.HashMap[String, FailureStatus]): Set[String]
 
   // Default implementation to remove failure executors from HashMap based on given time period.
-  def expireExecutorsInBlackList(failedExecutorMap: mutable.HashMap[String, FailureStatus]): Unit = {
+  def expireExecutorsInBlackList(
+      failedExecutorMap: mutable.HashMap[String, FailureStatus]): Unit = {
     val now = new SystemClock().getTimeMillis()
     failedExecutorMap.retain((executorid, failureStatus) => {
       (now - failureStatus.updatedTime) < expireTimeInMillisecond
@@ -86,9 +87,9 @@ object BlacklistStrategy {
             sparkConf.getInt("spark.scheduler.blacklist.threshold.maxBlackExecutorNumber", 3),
             timeout)
       case "strict" =>
-        // A special case of SimpleStrategy, Once task failed  at executor,
+        // A special case of SimpleStrategy: Once task failed  at executor,
         // put the executor and its node into blacklist.
-        new SimpleStrategy(0,0,timeout)
+        new SimpleStrategy(0, 0, timeout)
       case unsupported =>
         throw new Exception(s"No match blacklist strategy for $unsupported")
     }

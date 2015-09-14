@@ -244,7 +244,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
             SparkListenerExecutorRemoved(System.currentTimeMillis(), executorId, reason))
         case None => logInfo(s"Asked to remove non-existent executor $executorId")
       }
-      
+
       // Remove disconnected executor from blacklistTracker to keep consistency
       scheduler.sc.blacklistTracker.foreach(_.removeFailureExecutors(Iterable(executorId)))
     }

@@ -67,22 +67,22 @@ class BlacklistTracker(sparkConf: SparkConf) {
   def updateFailureExecutors(info: TaskInfo, reason: TaskEndReason) : Unit = synchronized {
     reason match {
       // if task Success on some executor, remove the executor from failedExecutorMap
-      case Success => 
+      case Success =>
         removeFailureExecutors(Iterable(info.executorId))
 
-      // for the failure task case, update failedExecutorMap to get the latest failure time 
+      // for the failure task case, update failedExecutorMap to get the latest failure time
       // and increase failureTimes
       case _ =>
         val executorId = info.executorId
         val failureTimes = failedExecutorMap.get(executorId).fold(0)(_.failureTimes) + 1
         val failedTaskIds = failedExecutorMap.get(executorId)
-          .fold(Set.empty[Long])(_.failedTaskIds) ++ Set(info.taskId)    
+          .fold(Set.empty[Long])(_.failedTaskIds) ++ Set(info.taskId)
         val failureStatus = FailureStatus(
             info.host,
             failureTimes,
             clock.getTimeMillis(),
             failedTaskIds)
-            
+
         failedExecutorMap.update(executorId, failureStatus)
     }
   }
