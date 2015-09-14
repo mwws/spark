@@ -244,6 +244,9 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
             SparkListenerExecutorRemoved(System.currentTimeMillis(), executorId, reason))
         case None => logInfo(s"Asked to remove non-existent executor $executorId")
       }
+      
+      // Remove disconnected executor from blacklistTracker to keep consistency
+      scheduler.sc.blacklistTracker.foreach(_.removeFailureExecutors(Iterable(executorId)))
     }
 
     override def onStop() {
@@ -434,12 +437,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         numExistingExecutors + numPendingExecutors - executorsPendingToRemove.size)
     }
 
-    val killRequestAcknowledged = doKillExecutors(executorsToKill)
-    if(killRequestAcknowledged) {
-      scheduler.sc.blacklistTracker.foreach(_.removeFailureExecutors(executorsToKill))
-    }
-
-    killRequestAcknowledged
+    doKillExecutors(executorsToKill)
   }
 
   /**

@@ -39,13 +39,13 @@ import org.apache.spark.util.Utils
  */
 class BlacklistTracker(sparkConf: SparkConf) {
   // maintain a ExecutorId --> FailureStatus HashMap
-  private val failureExecutors: mutable.HashMap[String, FailureStatus] = mutable.HashMap()
+  private val failedExecutorMap: mutable.HashMap[String, FailureStatus] = mutable.HashMap()
 
   // Apply Strategy pattern here to change different blacklist detection logic
   private val strategy = BlacklistStrategy(sparkConf)
 
   // A daemon thread to expire blacklist executor periodically
-  private val executor = ThreadUtils.newDaemonSingleThreadScheduledExecutor(
+  private val scheduler = ThreadUtils.newDaemonSingleThreadScheduledExecutor(
       "spark-scheduler-blacklist-expire-timer")
 
   private val clock = new SystemClock()
@@ -53,33 +53,42 @@ class BlacklistTracker(sparkConf: SparkConf) {
   def start(): Unit = {
     val scheduleTask = new Runnable() {
       override def run(): Unit = {
-        Utils.logUncaughtExceptions(expireTimeoutFailureExecutors(failureExecutors))
+        Utils.logUncaughtExceptions(expireExecutorsInBlackList(failedExecutorMap))
       }
     }
-    executor.scheduleAtFixedRate(scheduleTask, 0L, 60, TimeUnit.SECONDS)
+    scheduler.scheduleAtFixedRate(scheduleTask, 0L, 60, TimeUnit.SECONDS)
   }
 
   def stop(): Unit = {
-    executor.shutdown()
-    executor.awaitTermination(10, TimeUnit.SECONDS)
+    scheduler.shutdown()
+    scheduler.awaitTermination(10, TimeUnit.SECONDS)
   }
 
   def updateFailureExecutors(info: TaskInfo, reason: TaskEndReason) : Unit = synchronized {
     reason match {
-      case Success => Unit
+      // if task Success on some executor, remove the executor from failedExecutorMap
+      case Success => 
+        removeFailureExecutors(Iterable(info.executorId))
+
+      // for the failure task case, update failedExecutorMap to get the latest failure time 
+      // and increase failureTimes
       case _ =>
         val executorId = info.executorId
-        val failureTimes = failureExecutors.get(executorId).fold(0)(_.failureTimes) + 1
-        val failedTaskIds = failureExecutors.get(executorId)
-          .fold(Set.empty[Long])(_.failedTaskIds) ++ Set(info.taskId)
-        val failureStatus = FailureStatus(info.host, failureTimes,
-            clock.getTimeMillis(), failedTaskIds)
-        failureExecutors.update(executorId, failureStatus)
+        val failureTimes = failedExecutorMap.get(executorId).fold(0)(_.failureTimes) + 1
+        val failedTaskIds = failedExecutorMap.get(executorId)
+          .fold(Set.empty[Long])(_.failedTaskIds) ++ Set(info.taskId)    
+        val failureStatus = FailureStatus(
+            info.host,
+            failureTimes,
+            clock.getTimeMillis(),
+            failedTaskIds)
+            
+        failedExecutorMap.update(executorId, failureStatus)
     }
   }
 
   def removeFailureExecutors(executorIds: Iterable[String]) : Unit = synchronized {
-    executorIds.foreach ( failureExecutors.remove(_))
+    executorIds.foreach ( failedExecutorMap.remove(_))
   }
 
   def executorIsBlacklisted(executorId: String, sched: TaskSchedulerImpl) : Boolean = {
@@ -99,18 +108,18 @@ class BlacklistTracker(sparkConf: SparkConf) {
           .getOrElse(Set.empty[String])).toSet
     }
 
-    speculationFailedExecutor ++ strategy.getExecutorBlacklist(failureExecutors)
+    speculationFailedExecutor ++ strategy.getExecutorBlacklist(failedExecutorMap)
   }
 
   // The actual implementation is delegated to strategy
   def nodeBlacklist: Set[String] = synchronized {
-    strategy.getNodeBlacklist(failureExecutors)
+    strategy.getNodeBlacklist(failedExecutorMap)
   }
 
   // The actual implementation is delegated to strategy
-  private def expireTimeoutFailureExecutors(
+  private def expireExecutorsInBlackList(
       failureExecutors: mutable.HashMap[String, FailureStatus]): Unit = synchronized {
-    strategy.recoverFailureExecutors(failureExecutors)
+    strategy.expireExecutorsInBlackList(failureExecutors)
   }
 }
 

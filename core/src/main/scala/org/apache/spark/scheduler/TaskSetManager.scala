@@ -618,7 +618,8 @@ private[spark] class TaskSetManager(
       logInfo("Ignoring task-finished event for " + info.id + " in stage " + taskSet.id +
         " because task " + index + " has already completed successfully")
     }
-    blacklistTracker.foreach(_.removeFailureExecutors(Iterable(info.executorId)))
+    
+    blacklistTracker.foreach(_.updateFailureExecutors(info,Success))
     maybeFinishTaskSet()
   }
 
@@ -695,7 +696,6 @@ private[spark] class TaskSetManager(
         None
     }
 
-    // add failed executors to blacklistTracker
     blacklistTracker.foreach(_.updateFailureExecutors(info, reason))
 
     sched.dagScheduler.taskEnded(tasks(index), reason, null, null, info, taskMetrics)
